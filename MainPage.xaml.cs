@@ -1,23 +1,25 @@
-﻿namespace TimeSheet_MAUI;
+using TimeSheet_MAUI.Services;
+using TimeSheet_MAUI.ViewModels;
+
+namespace TimeSheet_MAUI;
 
 public partial class MainPage : ContentPage
 {
-	int count = 0;
+    private readonly MainViewModel _viewModel;
+    private readonly IDialogService _dialogService;
 
-	public MainPage()
-	{
-		InitializeComponent();
-	}
+    public MainPage(MainViewModel viewModel, IDialogService dialogService)
+    {
+        InitializeComponent();
+        BindingContext = _viewModel = viewModel;
+        _dialogService = dialogService;
+    }
 
-	private void OnCounterClicked(object? sender, EventArgs e)
-	{
-		count++;
+    protected override async void OnAppearing()
+    {
+        base.OnAppearing();
+        _dialogService.Initialize(this);
+        await _viewModel.InitializeAsync();
+    }
 
-		if (count == 1)
-			CounterBtn.Text = $"Clicked {count} time";
-		else
-			CounterBtn.Text = $"Clicked {count} times";
-
-		SemanticScreenReader.Announce(CounterBtn.Text);
-	}
 }
