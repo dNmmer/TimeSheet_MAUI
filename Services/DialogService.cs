@@ -1,8 +1,15 @@
+using System.IO;
+using System.Linq;
 using Microsoft.Maui.ApplicationModel;
 using Microsoft.Maui.Controls;
 using Microsoft.Maui.Devices;
 using Microsoft.Maui.Storage;
 using TimeSheet_MAUI.ViewModels;
+#if WINDOWS
+using Microsoft.Maui.Platform;
+using Windows.Storage.Pickers;
+using WinRT.Interop;
+#endif
 
 namespace TimeSheet_MAUI.Services;
 
@@ -48,5 +55,50 @@ public sealed class DialogService : IDialogService
         }
 
         await MainThread.InvokeOnMainThreadAsync(() => _page.DisplayAlert(title, message, "Ок"));
+    }
+
+    public async Task<bool> ShowConfirmationAsync(string title, string message, string acceptButton, string cancelButton)
+    {
+        return await MainThread.InvokeOnMainThreadAsync(async () =>
+        {
+            var targetPage = _page ?? Application.Current?.MainPage;
+            if (targetPage is null)
+            {
+                return false;
+            }
+
+            return await targetPage.DisplayAlert(title, message, acceptButton, cancelButton);
+        });
+    }
+
+    public async Task<string?> PickTemplateSavePathAsync(string suggestedFileName)
+    {
+#if WINDOWS
+        try
+        {
+            var picker = new FileSavePicker
+            {
+                SuggestedFileName = Path.GetFileNameWithoutExtension(suggestedFileName)
+            };
+            picker.FileTypeChoices.Add("Excel", new[] { ".xlsx" });
+
+            var window = Application.Current?.Windows.FirstOrDefault();
+            if (window?.Handler?.PlatformView is MauiWinUIWindow nativeWindow)
+            {
+                InitializeWithWindow.Initialize(picker, WindowNative.GetWindowHandle(nativeWindow));
+            }
+
+            var file = await picker.PickSaveFileAsync();
+            return file?.Path;
+        }
+        catch
+        {
+            return null;
+        }
+#else
+        var directory = FileSystem.Current.AppDataDirectory;
+        Directory.CreateDirectory(directory);
+        return Path.Combine(directory, suggestedFileName);
+#endif
     }
 }

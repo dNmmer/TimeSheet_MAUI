@@ -1,4 +1,6 @@
 using System.Collections.ObjectModel;
+using System.Diagnostics;
+using System.IO;
 using System.Threading;
 using CommunityToolkit.Mvvm.ComponentModel;
 using CommunityToolkit.Mvvm.Input;
@@ -135,15 +137,17 @@ public partial class MainViewModel : ObservableRecipient
             return;
         }
 
-        await LoadReferenceAsync(selected);
-        await SaveConfigAsync(selected);
+        var loaded = await LoadReferenceAsync(selected);
+        if (loaded)
+        {
+            await SaveConfigAsync(selected);
+        }
     }
 
     private async Task ReloadReferenceAsync()
     {
-        if (!HasExcelPath)
+        if (!await EnsureExcelFileExistsAsync())
         {
-            await _dialogs.ShowMessageAsync("Файл не выбран", "Укажите Excel-файл.", StatusLevel.Warning);
             return;
         }
 
@@ -152,18 +156,50 @@ public partial class MainViewModel : ObservableRecipient
 
     private async Task CreateTemplateAsync()
     {
-        var directory = FileSystem.Current.AppDataDirectory;
-        Directory.CreateDirectory(directory);
-        var fileName = $"timesheet_template_{DateTime.Now:yyyyMMdd_HHmmss}.xlsx";
-        var savePath = Path.Combine(directory, fileName);
-
-        await RunSafeAsync(async () =>
+        var suggestedName = $"timesheet_template_{DateTime.Now:yyyyMMdd_HHmmss}.xlsx";
+        var savePath = await _dialogs.PickTemplateSavePathAsync(suggestedName);
+        if (string.IsNullOrWhiteSpace(savePath))
         {
+            return;
+        }
+
+        var created = await RunSafeAsync(async () =>
+        {
+            var directory = Path.GetDirectoryName(savePath);
+            if (!string.IsNullOrEmpty(directory))
+            {
+                Directory.CreateDirectory(directory);
+            }
+
             await Task.Run(() => _excelService.CreateTemplate(savePath));
-            await _dialogs.ShowMessageAsync("Готово", $"Шаблон создан:\n{savePath}");
-            await LoadReferenceAsync(savePath);
-            await SaveConfigAsync(savePath);
         });
+
+        if (!created)
+        {
+            return;
+        }
+
+        SetStatus("Откройте файл и заполните справочник.", StatusLevel.Info);
+        var openedAutomatically = await TryOpenTemplateAsync(savePath);
+        if (!openedAutomatically)
+        {
+            await _dialogs.ShowMessageAsync("Откройте файл", $"Откройте и заполните файл вручную:\n{savePath}", StatusLevel.Warning);
+        }
+
+        var opened = await WaitForFileOpenedAsync(savePath);
+        if (!opened)
+        {
+            await _dialogs.ShowMessageAsync("Файл не заполнен", "Файл так и не был открыт. Повторите создание шаблона.", StatusLevel.Warning);
+            return;
+        }
+
+        await WaitUntilFileReleasedAsync(savePath);
+
+        var loaded = await LoadReferenceAsync(savePath);
+        if (loaded)
+        {
+            await SaveConfigAsync(savePath);
+        }
     }
 
     private void ShowRequirements()
@@ -209,9 +245,8 @@ public partial class MainViewModel : ObservableRecipient
 
     private async Task StartWorkdayAsync()
     {
-        if (!HasExcelPath)
+        if (!await EnsureExcelFileExistsAsync())
         {
-            await _dialogs.ShowMessageAsync("Файл не выбран", "Укажите Excel-файл.", StatusLevel.Warning);
             return;
         }
 
@@ -225,9 +260,8 @@ public partial class MainViewModel : ObservableRecipient
 
     private async Task EndWorkdayAsync()
     {
-        if (!HasExcelPath)
+        if (!await EnsureExcelFileExistsAsync())
         {
-            await _dialogs.ShowMessageAsync("Файл не выбран", "Укажите Excel-файл.", StatusLevel.Warning);
             return;
         }
 
@@ -268,9 +302,8 @@ public partial class MainViewModel : ObservableRecipient
             return;
         }
 
-        if (!HasExcelPath)
+        if (!await EnsureExcelFileExistsAsync())
         {
-            await _dialogs.ShowMessageAsync("Файл не выбран", "Укажите Excel-файл.", StatusLevel.Warning);
             return;
         }
 
@@ -296,19 +329,82 @@ public partial class MainViewModel : ObservableRecipient
 
     private bool CanStopTimer() => _timer.Elapsed > TimeSpan.Zero;
 
-    private async Task LoadReferenceAsync(string path)
+    private async Task<bool> LoadReferenceAsync(string path)
     {
-        await RunSafeAsync(async () =>
+        while (true)
         {
-            var data = await Task.Run(() => _excelService.LoadReferenceData(path));
-            ReplaceItems(Projects, data.Projects);
-            ReplaceItems(WorkTypes, data.WorkTypes);
-            SelectedProject = Projects.FirstOrDefault();
-            SelectedWorkType = WorkTypes.FirstOrDefault();
-            _hasReference = Projects.Count > 0 && WorkTypes.Count > 0;
-            ExcelPath = path;
-            SetStatus($"Выбран файл: {path}", StatusLevel.Success);
-        });
+            if (!File.Exists(path))
+            {
+                await HandleMissingExcelFileAsync(path);
+                return false;
+            }
+
+            string? structureErrorMessage = null;
+
+            var success = await RunSafeAsync(async () =>
+            {
+                try
+                {
+                    var data = await Task.Run(() => _excelService.LoadReferenceData(path));
+                    ReplaceItems(Projects, data.Projects);
+                    ReplaceItems(WorkTypes, data.WorkTypes);
+                    _hasReference = Projects.Count > 0 && WorkTypes.Count > 0;
+                    if (!_hasReference)
+                    {
+                        throw new ExcelStructureException("Лист 'Справочник' должен содержать хотя бы один проект и тип работ.");
+                    }
+
+                    SelectedProject = Projects.FirstOrDefault();
+                    SelectedWorkType = WorkTypes.FirstOrDefault();
+                    ExcelPath = path;
+                    SetStatus($"Выбран файл: {path}", StatusLevel.Success);
+                }
+                catch (ExcelStructureException ex)
+                {
+                    structureErrorMessage = ex.Message;
+                    throw;
+                }
+            }, showStructureError: false);
+
+            if (success)
+            {
+                return true;
+            }
+
+            if (structureErrorMessage is null)
+            {
+                ShowDefaultStatus();
+                return false;
+            }
+
+            var shouldOpen = await _dialogs.ShowConfirmationAsync(
+                "Справочник не заполнен",
+                $"{structureErrorMessage}\nОткрыть файл для заполнения?",
+                "Заполнить",
+                "Ок");
+
+            if (!shouldOpen)
+            {
+                ShowDefaultStatus();
+                return false;
+            }
+
+            var opened = await TryOpenTemplateAsync(path);
+            if (!opened)
+            {
+                await _dialogs.ShowMessageAsync("Не удалось открыть файл", $"Откройте и заполните файл вручную:\n{path}", StatusLevel.Error);
+                continue;
+            }
+
+            var hasBeenOpened = await WaitForFileOpenedAsync(path);
+            if (!hasBeenOpened)
+            {
+                await _dialogs.ShowMessageAsync("Файл не открыт", "Файл не был открыт. Повторите попытку.", StatusLevel.Warning);
+                continue;
+            }
+
+            await WaitUntilFileReleasedAsync(path);
+        }
     }
 
     private async Task SaveConfigAsync(string path)
@@ -317,11 +413,11 @@ public partial class MainViewModel : ObservableRecipient
         await _configService.SaveAsync(_currentConfig);
     }
 
-    private async Task RunSafeAsync(Func<Task> action)
+    private async Task<bool> RunSafeAsync(Func<Task> action, bool showStructureError = true)
     {
         if (IsBusy)
         {
-            return;
+            return false;
         }
 
         try
@@ -329,14 +425,20 @@ public partial class MainViewModel : ObservableRecipient
             IsBusy = true;
             NotifyInteractionStateChanged();
             await action();
+            return true;
         }
         catch (ExcelStructureException ex)
         {
-            await _dialogs.ShowMessageAsync("Структура Excel", ex.Message, StatusLevel.Error);
+            if (showStructureError)
+            {
+                await _dialogs.ShowMessageAsync("Структура Excel", ex.Message, StatusLevel.Error);
+            }
+            return false;
         }
         catch (Exception ex)
         {
             await _dialogs.ShowMessageAsync("Ошибка", ex.Message, StatusLevel.Error);
+            return false;
         }
         finally
         {
@@ -349,6 +451,109 @@ public partial class MainViewModel : ObservableRecipient
     {
         TimerText = FormatElapsed(elapsed);
         NotifyInteractionStateChanged();
+    }
+
+    private async Task<bool> TryOpenTemplateAsync(string path)
+    {
+        try
+        {
+#if WINDOWS
+            Process.Start(new ProcessStartInfo(path) { UseShellExecute = true });
+            await Task.CompletedTask;
+            return true;
+#else
+            var file = new ReadOnlyFile(path);
+            await Launcher.Default.OpenAsync(new OpenFileRequest(Path.GetFileName(path), file));
+            return true;
+#endif
+        }
+        catch
+        {
+            return false;
+        }
+    }
+
+    private async Task<bool> WaitForFileOpenedAsync(string path)
+    {
+        var timeout = TimeSpan.FromMinutes(5);
+        var watch = Stopwatch.StartNew();
+
+        while (watch.Elapsed < timeout)
+        {
+            if (!File.Exists(path))
+            {
+                return false;
+            }
+
+            if (IsFileLocked(path))
+            {
+                return true;
+            }
+
+            await Task.Delay(TimeSpan.FromSeconds(1));
+        }
+
+        return false;
+    }
+
+    private async Task WaitUntilFileReleasedAsync(string path)
+    {
+        while (File.Exists(path) && IsFileLocked(path))
+        {
+            await Task.Delay(TimeSpan.FromSeconds(1));
+        }
+    }
+
+    private static bool IsFileLocked(string path)
+    {
+        try
+        {
+            using var stream = new FileStream(path, FileMode.Open, FileAccess.ReadWrite, FileShare.None);
+            return false;
+        }
+        catch (IOException)
+        {
+            return true;
+        }
+        catch (UnauthorizedAccessException)
+        {
+            return true;
+        }
+    }
+
+    private async Task<bool> EnsureExcelFileExistsAsync()
+    {
+        if (!HasExcelPath)
+        {
+            await _dialogs.ShowMessageAsync("Файл не выбран", "Укажите Excel-файл.", StatusLevel.Warning);
+            return false;
+        }
+
+        if (!File.Exists(ExcelPath!))
+        {
+            await HandleMissingExcelFileAsync(ExcelPath!);
+            return false;
+        }
+
+        return true;
+    }
+
+    private async Task HandleMissingExcelFileAsync(string path)
+    {
+        await _dialogs.ShowMessageAsync("Файл не найден", $"Файл недоступен:\n{path}", StatusLevel.Error);
+
+        if (string.Equals(path, ExcelPath, StringComparison.OrdinalIgnoreCase))
+        {
+            ExcelPath = null;
+            _hasReference = false;
+            Projects.Clear();
+            WorkTypes.Clear();
+            SelectedProject = null;
+            SelectedWorkType = null;
+            _currentConfig = AppConfig.Default;
+            await _configService.SaveAsync(_currentConfig);
+            ShowDefaultStatus();
+        }
     }
 
     private static void ReplaceItems(ObservableCollection<string> collection, IReadOnlyList<string> items)

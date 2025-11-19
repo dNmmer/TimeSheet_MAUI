@@ -8,5 +8,9 @@ public interface IDialogService
 
     Task<string?> PickExcelFileAsync();
 
+    Task<string?> PickTemplateSavePathAsync(string suggestedFileName);
+
     Task ShowMessageAsync(string title, string message, StatusLevel level = StatusLevel.Info);
+
+    Task<bool> ShowConfirmationAsync(string title, string message, string acceptButton, string cancelButton);
 }
