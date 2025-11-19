@@ -1,4 +1,5 @@
 using System.Collections.ObjectModel;
+using System.Threading;
 using CommunityToolkit.Mvvm.ComponentModel;
 using CommunityToolkit.Mvvm.Input;
 using Microsoft.Maui.ApplicationModel;
@@ -20,6 +21,7 @@ public partial class MainViewModel : ObservableRecipient
 
     private AppConfig _currentConfig = AppConfig.Default;
     private bool _hasReference;
+    private CancellationTokenSource? _statusResetCts;
 
     public MainViewModel(
         ConfigService configService,
@@ -44,6 +46,8 @@ public partial class MainViewModel : ObservableRecipient
         StartTimerCommand = new RelayCommand(StartTimer, CanStartTimer);
         PauseTimerCommand = new RelayCommand(PauseTimer, CanPauseTimer);
         StopTimerCommand = new AsyncRelayCommand(StopTimerAsync, CanStopTimer);
+
+        ShowDefaultStatus();
     }
 
     public ObservableCollection<string> Projects { get; } = new();
@@ -370,6 +374,7 @@ public partial class MainViewModel : ObservableRecipient
             StatusLevel.Error => Color.FromArgb("#C42B1C"),
             _ => Color.FromArgb("#2563EB")
         };
+        ScheduleStatusReset();
     }
 
     private void NotifyInteractionStateChanged()
@@ -383,4 +388,35 @@ public partial class MainViewModel : ObservableRecipient
         PauseTimerCommand.NotifyCanExecuteChanged();
         StopTimerCommand.NotifyCanExecuteChanged();
     }
+
+    private void ScheduleStatusReset()
+    {
+        _statusResetCts?.Cancel();
+        var cts = new CancellationTokenSource();
+        _statusResetCts = cts;
+
+        _ = Task.Run(async () =>
+        {
+            try
+            {
+                await Task.Delay(TimeSpan.FromSeconds(10), cts.Token);
+                await MainThread.InvokeOnMainThreadAsync(ShowDefaultStatus);
+            }
+            catch (OperationCanceledException)
+            {
+                // ignored
+            }
+        });
+    }
+
+    private void ShowDefaultStatus()
+    {
+        _statusResetCts?.Cancel();
+        StatusColor = Colors.Transparent;
+        StatusMessage = GetDefaultStatusMessage();
+        IsStatusOpen = true;
+    }
+
+    private string GetDefaultStatusMessage() =>
+        HasExcelPath ? $"Выбран файл: {ExcelPath}" : "Файл не выбран.";
 }
