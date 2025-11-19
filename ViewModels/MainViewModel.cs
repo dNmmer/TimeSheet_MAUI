@@ -1,3 +1,4 @@
+using System;
 using System.Collections.ObjectModel;
 using System.Diagnostics;
 using System.IO;
@@ -23,6 +24,9 @@ public partial class MainViewModel : ObservableRecipient
 
     private AppConfig _currentConfig = AppConfig.Default;
     private bool _hasReference;
+    private bool _isTimerPaused;
+    private bool _shutdownHandlersRegistered;
+    private int _shutdownPersisted;
     private CancellationTokenSource? _statusResetCts;
 
     public MainViewModel(
@@ -50,6 +54,7 @@ public partial class MainViewModel : ObservableRecipient
         StopTimerCommand = new AsyncRelayCommand(StopTimerAsync, CanStopTimer);
 
         ShowDefaultStatus();
+        RegisterShutdownGuards();
     }
 
     public ObservableCollection<string> Projects { get; } = new();
@@ -73,8 +78,18 @@ public partial class MainViewModel : ObservableRecipient
     [ObservableProperty]
     private string? selectedProject;
 
+    partial void OnSelectedProjectChanged(string? value)
+    {
+        NotifyTimerPrerequisitesChanged();
+    }
+
     [ObservableProperty]
     private string? selectedWorkType;
+
+    partial void OnSelectedWorkTypeChanged(string? value)
+    {
+        NotifyTimerPrerequisitesChanged();
+    }
 
     [ObservableProperty]
     private string timerText = "00:00:00";
@@ -94,13 +109,21 @@ public partial class MainViewModel : ObservableRecipient
     [ObservableProperty]
     private Color statusColor = Colors.Transparent;
 
-    public bool AreInputsEnabled => _hasReference && !_timer.IsRunning && !IsBusy;
+    public bool AreInputsEnabled => _hasReference && !IsTimerActive && !IsBusy;
 
-    public bool IsStartWorkdayEnabled => !_timer.IsRunning && !IsBusy && !IsWorkdayStarted && HasExcelPath;
+    public bool IsStartWorkdayEnabled => !IsTimerActive && !IsBusy && !IsWorkdayStarted && HasExcelPath;
 
-    public bool IsEndWorkdayEnabled => !IsBusy && IsWorkdayStarted;
+    public bool IsEndWorkdayEnabled => !IsBusy && IsWorkdayStarted && !IsTimerActive;
+
+    public bool IsStartButtonEnabled => CanStartTimer();
+
+    public bool IsPauseButtonEnabled => _timer.IsRunning;
+
+    public bool IsStopButtonEnabled => IsTimerActive && _timer.Elapsed > TimeSpan.Zero;
 
     private bool HasExcelPath => !string.IsNullOrWhiteSpace(ExcelPath);
+
+    private bool IsTimerActive => _timer.IsRunning || _isTimerPaused;
 
     private bool _initialized;
 
@@ -282,12 +305,19 @@ public partial class MainViewModel : ObservableRecipient
     private void StartTimer()
     {
         _timer.Start(_timer.Elapsed);
+        _isTimerPaused = false;
         NotifyInteractionStateChanged();
     }
 
     private void PauseTimer()
     {
+        if (!_timer.IsRunning)
+        {
+            return;
+        }
+
         _timer.Pause();
+        _isTimerPaused = true;
         NotifyInteractionStateChanged();
     }
 
@@ -295,6 +325,7 @@ public partial class MainViewModel : ObservableRecipient
     {
         var elapsed = _timer.Elapsed;
         _timer.Stop();
+        _isTimerPaused = false;
         NotifyInteractionStateChanged();
 
         if (elapsed <= TimeSpan.Zero)
@@ -322,12 +353,29 @@ public partial class MainViewModel : ObservableRecipient
         });
     }
 
-    private bool CanStartTimer() =>
-        IsWorkdayStarted && AreInputsEnabled && !string.IsNullOrWhiteSpace(SelectedProject) && !string.IsNullOrWhiteSpace(SelectedWorkType);
+    private bool CanStartTimer()
+    {
+        if (IsBusy || !IsWorkdayStarted || !HasExcelPath)
+        {
+            return false;
+        }
+
+        if (_timer.IsRunning)
+        {
+            return false;
+        }
+
+        if (string.IsNullOrWhiteSpace(SelectedProject) || string.IsNullOrWhiteSpace(SelectedWorkType))
+        {
+            return false;
+        }
+
+        return _isTimerPaused || AreInputsEnabled;
+    }
 
     private bool CanPauseTimer() => _timer.IsRunning;
 
-    private bool CanStopTimer() => _timer.Elapsed > TimeSpan.Zero;
+    private bool CanStopTimer() => _timer.Elapsed > TimeSpan.Zero && IsTimerActive;
 
     private async Task<bool> LoadReferenceAsync(string path)
     {
@@ -521,6 +569,93 @@ public partial class MainViewModel : ObservableRecipient
         }
     }
 
+    public async Task<bool> ConfirmCloseAsync()
+    {
+        if (IsTimerActive)
+        {
+            await _dialogs.ShowMessageAsync("Таймер активен", "Остановите или завершите таймер перед выходом.", StatusLevel.Warning);
+            return false;
+        }
+
+        if (IsWorkdayStarted)
+        {
+            await _dialogs.ShowMessageAsync("Рабочий день не завершён", "Завершите рабочий день перед выходом.", StatusLevel.Warning);
+            return false;
+        }
+
+        return true;
+    }
+
+    public async Task ForcePersistStateAsync()
+    {
+        if (Interlocked.Exchange(ref _shutdownPersisted, 1) == 1)
+        {
+            return;
+        }
+
+        if (!HasExcelPath)
+        {
+            return;
+        }
+
+        var path = ExcelPath!;
+
+        try
+        {
+            if (IsTimerActive &&
+                _timer.Elapsed > TimeSpan.Zero &&
+                !string.IsNullOrWhiteSpace(SelectedProject) &&
+                !string.IsNullOrWhiteSpace(SelectedWorkType))
+            {
+                var entry = new TimesheetEntry(SelectedProject!, SelectedWorkType!, _timer.Elapsed, DateTime.Now);
+                await Task.Run(() => _excelService.AppendTimeEntry(path, entry));
+            }
+
+            if (IsWorkdayStarted)
+            {
+                await Task.Run(() => _excelService.EndWorkday(path));
+                IsWorkdayStarted = false;
+            }
+        }
+        catch (Exception ex)
+        {
+            Debug.WriteLine($"[Shutdown] {ex}");
+        }
+        finally
+        {
+            _timer.Stop();
+            _isTimerPaused = false;
+        }
+    }
+
+    private void RegisterShutdownGuards()
+    {
+        if (_shutdownHandlersRegistered)
+        {
+            return;
+        }
+
+        AppDomain.CurrentDomain.ProcessExit += OnProcessExit;
+        AppDomain.CurrentDomain.UnhandledException += OnUnhandledException;
+        _shutdownHandlersRegistered = true;
+    }
+
+    private void OnProcessExit(object? sender, EventArgs e) => ForcePersistStateSync();
+
+    private void OnUnhandledException(object? sender, UnhandledExceptionEventArgs e) => ForcePersistStateSync();
+
+    private void ForcePersistStateSync()
+    {
+        try
+        {
+            ForcePersistStateAsync().GetAwaiter().GetResult();
+        }
+        catch
+        {
+            // ignored
+        }
+    }
+
     private async Task<bool> EnsureExcelFileExistsAsync()
     {
         if (!HasExcelPath)
@@ -587,11 +722,20 @@ public partial class MainViewModel : ObservableRecipient
         OnPropertyChanged(nameof(AreInputsEnabled));
         OnPropertyChanged(nameof(IsStartWorkdayEnabled));
         OnPropertyChanged(nameof(IsEndWorkdayEnabled));
+        OnPropertyChanged(nameof(IsStartButtonEnabled));
+        OnPropertyChanged(nameof(IsPauseButtonEnabled));
+        OnPropertyChanged(nameof(IsStopButtonEnabled));
         StartWorkdayCommand.NotifyCanExecuteChanged();
         EndWorkdayCommand.NotifyCanExecuteChanged();
         StartTimerCommand.NotifyCanExecuteChanged();
         PauseTimerCommand.NotifyCanExecuteChanged();
         StopTimerCommand.NotifyCanExecuteChanged();
+    }
+
+    private void NotifyTimerPrerequisitesChanged()
+    {
+        StartTimerCommand.NotifyCanExecuteChanged();
+        OnPropertyChanged(nameof(IsStartButtonEnabled));
     }
 
     private void ScheduleStatusReset()

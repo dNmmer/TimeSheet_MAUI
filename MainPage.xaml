@@ -79,7 +79,7 @@
                     <HorizontalStackLayout Spacing="18">
                         <ImageButton Source="icon_play_circle_48dp.png"
                                      Command="{Binding StartTimerCommand}"
-                                     IsEnabled="{Binding AreInputsEnabled}"
+                                     IsEnabled="{Binding IsStartButtonEnabled}"
                                      WidthRequest="44"
                                      HeightRequest="44"
                                      BackgroundColor="Transparent"
@@ -87,6 +87,7 @@
                                      SemanticProperties.Description="Старт" />
                         <ImageButton Source="icon_pause_circle_48dp.png"
                                      Command="{Binding PauseTimerCommand}"
+                                     IsEnabled="{Binding IsPauseButtonEnabled}"
                                      WidthRequest="48"
                                      HeightRequest="48"
                                      BackgroundColor="Transparent"
@@ -94,6 +95,7 @@
                                      SemanticProperties.Description="Пауза" />
                         <ImageButton Source="icon_stop_circle_48dp.png"
                                      Command="{Binding StopTimerCommand}"
+                                     IsEnabled="{Binding IsStopButtonEnabled}"
                                      WidthRequest="48"
                                      HeightRequest="48"
                                      BackgroundColor="Transparent"

@@ -1,17 +1,29 @@
 using System;
+using System.Threading.Tasks;
 using Microsoft.Maui;
 #if WINDOWS
+using Microsoft.Maui.ApplicationModel;
 using Microsoft.Maui.Platform;
+using Microsoft.UI.Windowing;
 #endif
+using TimeSheet_MAUI.ViewModels;
 
 namespace TimeSheet_MAUI;
 
 public partial class App : Application
 {
-    public App(AppShell shell)
+    private readonly MainViewModel _viewModel;
+#if WINDOWS
+    private Window? _currentWindow;
+    private AppWindow? _appWindow;
+    private bool _programmaticClose;
+#endif
+
+    public App(AppShell shell, MainViewModel viewModel)
     {
         InitializeComponent();
         MainPage = shell;
+        _viewModel = viewModel;
     }
 
     protected override Window CreateWindow(IActivationState? activationState)
@@ -29,13 +41,69 @@ public partial class App : Application
     }
 
 #if WINDOWS
-    private static void OnWindowHandlerChanged(object? sender, EventArgs e)
+    private void OnWindowHandlerChanged(object? sender, EventArgs e)
     {
-        if (sender is Window window &&
-            window.Handler?.PlatformView is MauiWinUIWindow mauiWindow)
+        if (sender is not Window window ||
+            window.Handler?.PlatformView is not MauiWinUIWindow mauiWindow)
         {
-            mauiWindow.ExtendsContentIntoTitleBar = false;
+            return;
         }
+
+        mauiWindow.ExtendsContentIntoTitleBar = false;
+        _currentWindow = window;
+        AttachClosingHandler(mauiWindow);
+    }
+
+    private void AttachClosingHandler(MauiWinUIWindow mauiWindow)
+    {
+        if (_appWindow is not null)
+        {
+            _appWindow.Closing -= OnAppWindowClosing;
+        }
+
+        _appWindow = mauiWindow.AppWindow;
+        _appWindow.Closing += OnAppWindowClosing;
+    }
+
+    private void OnAppWindowClosing(AppWindow sender, AppWindowClosingEventArgs args)
+    {
+        if (_viewModel is null)
+        {
+            return;
+        }
+
+        if (_programmaticClose)
+        {
+            _programmaticClose = false;
+            return;
+        }
+
+        args.Cancel = true;
+        _ = HandleCloseRequestAsync();
+    }
+
+    private async Task HandleCloseRequestAsync()
+    {
+        if (_viewModel is null)
+        {
+            return;
+        }
+
+        var canClose = await _viewModel.ConfirmCloseAsync();
+        if (!canClose)
+        {
+            return;
+        }
+
+        await _viewModel.ForcePersistStateAsync();
+        _programmaticClose = true;
+        await MainThread.InvokeOnMainThreadAsync(() =>
+        {
+            if (_currentWindow is not null)
+            {
+                Application.Current?.CloseWindow(_currentWindow);
+            }
+        });
     }
 #endif
 }
