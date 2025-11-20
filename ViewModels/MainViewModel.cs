@@ -24,6 +24,7 @@ public partial class MainViewModel : ObservableRecipient
 
     private AppConfig _currentConfig = AppConfig.Default;
     private bool _hasReference;
+    private bool _pendingResumeChecked;
     private bool _isTimerPaused;
     private bool _shutdownHandlersRegistered;
     private int _shutdownPersisted;
@@ -143,7 +144,11 @@ public partial class MainViewModel : ObservableRecipient
         {
             try
             {
-                await LoadReferenceAsync(ExcelPath!);
+                var loaded = await LoadReferenceAsync(ExcelPath!);
+                if (loaded)
+                {
+                    await CheckPendingWorkdayAsync();
+                }
             }
             catch (Exception ex)
             {
@@ -567,6 +572,52 @@ public partial class MainViewModel : ObservableRecipient
         {
             return true;
         }
+    }
+
+    private async Task CheckPendingWorkdayAsync()
+    {
+        if (_pendingResumeChecked || !HasExcelPath)
+        {
+            return;
+        }
+
+        _pendingResumeChecked = true;
+
+        WorkdayPendingInfo? info;
+        try
+        {
+            info = await Task.Run(() => _excelService.GetPendingWorkday(ExcelPath!, DateTime.Today));
+        }
+        catch (ExcelStructureException ex)
+        {
+            await _dialogs.ShowMessageAsync("Структура Excel", ex.Message, StatusLevel.Error);
+            return;
+        }
+        catch (Exception ex)
+        {
+            await _dialogs.ShowMessageAsync("Ошибка", ex.Message, StatusLevel.Error);
+            return;
+        }
+
+        if (info is null)
+        {
+            return;
+        }
+
+        var resume = await _dialogs.ShowConfirmationAsync(
+            "Продолжить рабочий день?",
+            $"Рабочий день за {info.Date:dd.MM.yyyy} начат в {info.StartTime:hh\\:mm}. Продолжить?",
+            "Да",
+            "Нет");
+
+        if (!resume)
+        {
+            return;
+        }
+
+        IsWorkdayStarted = true;
+        SetStatus($"Рабочий день продолжается с {info.StartTime:hh\\:mm}.", StatusLevel.Info);
+        NotifyInteractionStateChanged();
     }
 
     public async Task<bool> ConfirmCloseAsync()

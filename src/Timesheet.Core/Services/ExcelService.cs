@@ -105,6 +105,56 @@ public sealed class ExcelService
         return new WorkdayEndInfo($"{hours:00}:{minutes:00}");
     }
 
+    public WorkdayPendingInfo? GetPendingWorkday(string workbookPath, DateTime targetDate)
+    {
+        using var workbook = OpenWorkbook(workbookPath);
+        var sheet = workbook.Worksheets.FirstOrDefault(ws => ws.Name == WorkdaySheet);
+        if (sheet is null)
+        {
+            return null;
+        }
+
+        var lastRow = sheet.LastRowUsed()?.RowNumber() ?? 1;
+        for (var row = lastRow; row >= 2; row--)
+        {
+            if (sheet.Cell(row, 1).IsEmpty())
+            {
+                continue;
+            }
+
+            DateTime dateValue;
+            try
+            {
+                dateValue = GetDate(sheet.Cell(row, 1));
+            }
+            catch
+            {
+                continue;
+            }
+
+            if (dateValue.Date != targetDate.Date)
+            {
+                continue;
+            }
+
+            if (sheet.Cell(row, 2).IsEmpty())
+            {
+                continue;
+            }
+
+            if (!sheet.Cell(row, 3).IsEmpty())
+            {
+                // запись за сегодняшнюю дату уже завершена
+                return null;
+            }
+
+            var start = GetTime(sheet.Cell(row, 2));
+            return new WorkdayPendingInfo(dateValue, start);
+        }
+
+        return null;
+    }
+
     public void CreateTemplate(string path)
     {
         using var workbook = new XLWorkbook();
