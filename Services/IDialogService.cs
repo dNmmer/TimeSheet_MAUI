@@ -13,4 +13,7 @@ public interface IDialogService
     Task ShowMessageAsync(string title, string message, StatusLevel level = StatusLevel.Info);
 
     Task<bool> ShowConfirmationAsync(string title, string message, string acceptButton, string cancelButton);
+
+    Task<string?> ShowPromptAsync(string title, string message, string acceptButton, string cancelButton);
 }
+

@@ -5,6 +5,16 @@
              x:Class="TimeSheet_MAUI.MainPage"
              x:DataType="vm:MainViewModel">
 
+    <ContentPage.Resources>
+        <Style x:Key="TimerButtonStyle" TargetType="Button">
+            <Setter Property="WidthRequest" Value="44" />
+            <Setter Property="HeightRequest" Value="40" />
+            <Setter Property="Padding" Value="8" />
+            <Setter Property="CornerRadius" Value="6" />
+            <Setter Property="FontFamily" Value="OpenSansRegular" />
+        </Style>
+    </ContentPage.Resources>
+
     <ContentPage.MenuBarItems>
         <MenuBarItem Text="Файл">
             <MenuFlyoutItem Text="Выбрать файл Excel"
@@ -76,31 +86,22 @@
                            FontAttributes="Bold"
                            FontFamily="OpenSansSemibold"
                            HorizontalTextAlignment="Center" />
-                    <HorizontalStackLayout Spacing="18">
-                        <ImageButton Source="icon_play_circle_48dp.png"
-                                     Command="{Binding StartTimerCommand}"
-                                     IsEnabled="{Binding IsStartButtonEnabled}"
-                                     WidthRequest="44"
-                                     HeightRequest="44"
-                                     BackgroundColor="Transparent"
-                                     Padding="8"
-                                     SemanticProperties.Description="Старт" />
-                        <ImageButton Source="icon_pause_circle_48dp.png"
-                                     Command="{Binding PauseTimerCommand}"
-                                     IsEnabled="{Binding IsPauseButtonEnabled}"
-                                     WidthRequest="48"
-                                     HeightRequest="48"
-                                     BackgroundColor="Transparent"
-                                     Padding="8"
-                                     SemanticProperties.Description="Пауза" />
-                        <ImageButton Source="icon_stop_circle_48dp.png"
-                                     Command="{Binding StopTimerCommand}"
-                                     IsEnabled="{Binding IsStopButtonEnabled}"
-                                     WidthRequest="48"
-                                     HeightRequest="48"
-                                     BackgroundColor="Transparent"
-                                     Padding="8"
-                                     SemanticProperties.Description="Стоп" />
+                    <HorizontalStackLayout Spacing="10">
+                        <Button Command="{Binding StartTimerCommand}"
+                                IsEnabled="{Binding IsStartButtonEnabled}"
+                                Style="{StaticResource TimerButtonStyle}"
+                                ImageSource="icon_play_circle_48dp.png"
+                                SemanticProperties.Description="Старт" />
+                        <Button Command="{Binding PauseTimerCommand}"
+                                IsEnabled="{Binding IsPauseButtonEnabled}"
+                                Style="{StaticResource TimerButtonStyle}"
+                                ImageSource="icon_pause_circle_48dp.png"
+                                SemanticProperties.Description="Пауза" />
+                        <Button Command="{Binding StopTimerCommand}"
+                                IsEnabled="{Binding IsStopButtonEnabled}"
+                                Style="{StaticResource TimerButtonStyle}"
+                                ImageSource="icon_stop_circle_48dp.png"
+                                SemanticProperties.Description="Стоп" />
                     </HorizontalStackLayout>
                 </VerticalStackLayout>
 
@@ -122,3 +123,4 @@
     </Grid>
 
 </ContentPage>
+

@@ -230,13 +230,18 @@ public partial class MainViewModel : ObservableRecipient
         }
     }
 
-    private void ShowRequirements()
+        
+        
+    
+    
+    
+        private void ShowRequirements()
     {
         var message =
             "Файл должен содержать листы:\n" +
-            "• 'Справочник' со столбцами Проект и Тип работ\n" +
-            "• 'Учет времени' со столбцами Дата, Проект, Тип работ, Длительность\n" +
-            "• 'Учет рабочего времени' со столбцами Дата, Начало, Окончание, Длительность";
+            "• 'Справочник' со столбцами Проект и Вид работ\n" +
+            "• 'Учет времени' со столбцами Дата, Проект, Вид работ, Длительность, В часах, Комментарий\n" +
+            "• 'Учет рабочего времени' со столбцами Дата, Начало, Окончание, Длительность, В часах";
         _ = _dialogs.ShowMessageAsync("Требования к Excel", message);
     }
 
@@ -351,7 +356,18 @@ public partial class MainViewModel : ObservableRecipient
 
         await RunSafeAsync(async () =>
         {
-            var entry = new TimesheetEntry(SelectedProject!, SelectedWorkType!, elapsed, DateTime.Now);
+            string? comment = null;
+            var addComment = await _dialogs.ShowConfirmationAsync("Оставить комментарий?", string.Empty, "Да", "Нет");
+            if (addComment)
+            {
+                comment = await _dialogs.ShowPromptAsync("Комментарий", "Введите текст комментария", "Ок", "Отмена");
+                if (string.IsNullOrWhiteSpace(comment))
+                {
+                    comment = null;
+                }
+            }
+
+            var entry = new TimesheetEntry(SelectedProject!, SelectedWorkType!, elapsed, DateTime.Now, comment);
             await Task.Run(() => _excelService.AppendTimeEntry(ExcelPath!, entry));
             SetStatus("Запись добавлена в 'Учет времени'.", StatusLevel.Success);
             TimerText = FormatElapsed(TimeSpan.Zero);
@@ -624,7 +640,7 @@ public partial class MainViewModel : ObservableRecipient
     {
         if (IsTimerActive)
         {
-            await _dialogs.ShowMessageAsync("Таймер активен", "Остановите или завершите таймер перед выходом.", StatusLevel.Warning);
+            await _dialogs.ShowMessageAsync("Таймер активен", "Остановите таймер перед выходом.", StatusLevel.Warning);
             return false;
         }
 
@@ -820,3 +836,5 @@ public partial class MainViewModel : ObservableRecipient
     private string GetDefaultStatusMessage() =>
         HasExcelPath ? $"Выбран файл: {ExcelPath}" : "Файл не выбран.";
 }
+
+

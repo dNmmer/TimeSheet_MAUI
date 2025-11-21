@@ -1,3 +1,6 @@
+using System;
+using System.IO;
+using System.Linq;
 using ClosedXML.Excel;
 using Timesheet.Core.Models;
 
@@ -43,7 +46,7 @@ public sealed class ExcelService
         var sheet = workbook.Worksheets.FirstOrDefault(ws => ws.Name == TimesheetSheet)
                     ?? throw new ExcelStructureException($"Workbook must contain sheet '{TimesheetSheet}'.");
 
-        var row = GetFirstEmptyRow(sheet, 2, 4);
+        var row = GetFirstEmptyRow(sheet, 2, 6);
 
         sheet.Cell(row, 1).Value = entry.FinishedAt.Date;
         sheet.Cell(row, 1).Style.DateFormat.Format = "dd.MM.yyyy";
@@ -51,6 +54,8 @@ public sealed class ExcelService
         sheet.Cell(row, 3).Value = entry.WorkType;
         sheet.Cell(row, 4).Value = entry.Duration;
         sheet.Cell(row, 4).Style.DateFormat.Format = "[h]:mm:ss";
+        sheet.Cell(row, 5).Value = Math.Round(entry.Duration.TotalHours, 2);
+        sheet.Cell(row, 6).Value = entry.Comment ?? string.Empty;
 
         workbook.Save();
     }
@@ -63,7 +68,7 @@ public sealed class ExcelService
 
         EnsureWorkdayHeaders(sheet);
         var now = nowOverride ?? DateTime.Now;
-        var row = GetFirstEmptyRow(sheet, 2, 4);
+        var row = GetFirstEmptyRow(sheet, 2, 5);
 
         sheet.Cell(row, 1).Value = now.Date;
         sheet.Cell(row, 1).Style.DateFormat.Format = "dd.MM.yyyy";
@@ -97,6 +102,7 @@ public sealed class ExcelService
         sheet.Cell(row, 3).Style.DateFormat.Format = "HH:mm";
         sheet.Cell(row, 4).Value = duration;
         sheet.Cell(row, 4).Style.DateFormat.Format = "[h]:mm";
+        sheet.Cell(row, 5).Value = Math.Round(duration.TotalHours, 2);
 
         workbook.Save();
         var totalMinutes = (int)Math.Round(duration.TotalMinutes, MidpointRounding.AwayFromZero);
@@ -144,7 +150,6 @@ public sealed class ExcelService
 
             if (!sheet.Cell(row, 3).IsEmpty())
             {
-                // запись за сегодняшнюю дату уже завершена
                 return null;
             }
 
@@ -158,25 +163,25 @@ public sealed class ExcelService
     public void CreateTemplate(string path)
     {
         using var workbook = new XLWorkbook();
-        workbook.AddWorksheet(ReferenceSheet);
-        workbook.AddWorksheet(TimesheetSheet);
-        workbook.AddWorksheet(WorkdaySheet);
+        var reference = workbook.AddWorksheet(ReferenceSheet);
+        var timesheet = workbook.AddWorksheet(TimesheetSheet);
+        var workday = workbook.AddWorksheet(WorkdaySheet);
 
-        var reference = workbook.Worksheet(ReferenceSheet);
         reference.Cell(1, 1).Value = "Проект";
-        reference.Cell(1, 2).Value = "Тип работ";
+        reference.Cell(1, 2).Value = "Вид работ";
 
-        var timesheet = workbook.Worksheet(TimesheetSheet);
         timesheet.Cell(1, 1).Value = "Дата";
         timesheet.Cell(1, 2).Value = "Проект";
-        timesheet.Cell(1, 3).Value = "Тип работ";
+        timesheet.Cell(1, 3).Value = "Вид работ";
         timesheet.Cell(1, 4).Value = "Длительность";
+        timesheet.Cell(1, 5).Value = "В часах";
+        timesheet.Cell(1, 6).Value = "Комментарий";
 
-        var workday = workbook.Worksheet(WorkdaySheet);
         workday.Cell(1, 1).Value = "Дата";
         workday.Cell(1, 2).Value = "Начало";
         workday.Cell(1, 3).Value = "Окончание";
         workday.Cell(1, 4).Value = "Длительность";
+        workday.Cell(1, 5).Value = "В часах";
 
         workbook.SaveAs(path);
     }
@@ -240,6 +245,7 @@ public sealed class ExcelService
             sheet.Cell(1, 2).Value = "Начало";
             sheet.Cell(1, 3).Value = "Окончание";
             sheet.Cell(1, 4).Value = "Длительность";
+            sheet.Cell(1, 5).Value = "В часах";
         }
     }
 
@@ -255,7 +261,7 @@ public sealed class ExcelService
             return date.Date;
         }
 
-        throw new ExcelStructureException("Не удалось прочитать дату начала дня.");
+        throw new ExcelStructureException("Не удалось считать дату начала дня.");
     }
 
     private static TimeSpan GetTime(IXLCell cell)
@@ -275,6 +281,6 @@ public sealed class ExcelService
             return time;
         }
 
-        throw new ExcelStructureException("Не удалось прочитать время начала дня.");
+        throw new ExcelStructureException("Не удалось считать время начала дня.");
     }
 }

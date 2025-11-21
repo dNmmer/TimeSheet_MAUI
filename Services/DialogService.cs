@@ -71,6 +71,19 @@ public sealed class DialogService : IDialogService
         });
     }
 
+    public async Task<string?> ShowPromptAsync(string title, string message, string acceptButton, string cancelButton)
+    {
+        return await MainThread.InvokeOnMainThreadAsync(async () =>
+        {
+            var targetPage = _page ?? Application.Current?.MainPage;
+            if (targetPage is null)
+            {
+                return null;
+            }
+
+            return await targetPage.DisplayPromptAsync(title, message, acceptButton, cancelButton);
+        });
+    }
     public async Task<string?> PickTemplateSavePathAsync(string suggestedFileName)
     {
 #if WINDOWS
@@ -102,3 +115,5 @@ public sealed class DialogService : IDialogService
 #endif
     }
 }
+
+

@@ -1,3 +1,3 @@
 namespace Timesheet.Core.Models;
 
-public sealed record TimesheetEntry(string Project, string WorkType, TimeSpan Duration, DateTime FinishedAt);
+public sealed record TimesheetEntry(string Project, string WorkType, TimeSpan Duration, DateTime FinishedAt, string? Comment = null);
